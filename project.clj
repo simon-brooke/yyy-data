@@ -7,4 +7,7 @@
                  [generateme/fastmath "1.0.1"]
                  [org.clojure/clojure "1.8.0"]
                  [org.clojure/data.json "0.2.6"]
-                 [net.mikera/core.matrix "0.62.0"]])
+                 [org.clojure/math.numeric-tower "0.0.4"]
+                 [net.mikera/core.matrix "0.62.0"]]
+   :plugins [[lein-gorilla "0.4.0"]]
+  )

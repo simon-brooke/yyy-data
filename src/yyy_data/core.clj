@@ -4,11 +4,46 @@
             [fastmath.core :refer [radians degrees sin cos tan sqrt atan2]]
             [clojure.core.matrix :as mx]
             [clojure.data.json :as json]
+            [clojure.math.numeric-tower :refer [expt]]
             [clojure.string :as s]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;
+;;;; yyy-data.core
+;;;;
+;;;; This program is free software; you can redistribute it and/or
+;;;; modify it under the terms of the GNU General Public License
+;;;; as published by the Free Software Foundation; either version 2
+;;;; of the License, or (at your option) any later version.
+;;;;
+;;;; This program is distributed in the hope that it will be useful,
+;;;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;;;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;;;; GNU General Public License for more details.
+;;;;
+;;;; You should have received a copy of the GNU General Public License
+;;;; along with this program; if not, write to the Free Software
+;;;; Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301,
+;;;; USA.
+;;;;
+;;;; Copyright (C) 2018 Simon Brooke
+;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;; There are a number of bad design decisions in my implementation of this.
+;;; Using protocols and records was probably a mistake.
+;;;
+;;; The decision not only to adopt but to extend the untypable variable names
+;;; of the original was DEFINITELY a mistake.
+;;;
+;;; Pragmatically, trying to translate the Javascript file was a mistake. I should
+;;; just wrap it in a webservice and call it. Less elegant but I don't have time
+;;; to mess around.
+
+
 
 (declare geopoint-to-osgrid vector3d-to-geopoint geopoint-to-vector3d osgrid-to-geopoint)
 
-;;; Coordinate system conversion cribbed from https://www.movable-type.co.uk/scripts/latlong-os-gridref.html
 
 (def ellipsoids
   "Ellipsoid parameters; major axis (a), minor axis (b), and flattening (f) for each ellipsoid."
@@ -65,10 +100,12 @@
 
 
 (defprotocol Transformable
+  "Something which can be transformed with a matrix transform."
   (apply-transform [this transform]))
 
 
 (defrecord Vector3d
+  ;; "A vector from the centre of the earth, which intercepts the surface at a point."
   [x y z]
   Location
   ;; datum is a bit meaningless for a Vector3d; get the default.
@@ -77,11 +114,12 @@
   (ellipsoid [x] (:ellipsoid (datum x)))
   ;; I already am vector3d; return myself
   (vector3d [x] x)
-  (geopoint [this datum] (vector3d-to-geopoint))
+  (geopoint [this datum] (vector3d-to-geopoint this datum))
   Transformable
   (apply-transform [this transform]
+    (println (str "(apply-transform " this " " transform ")"))
                    (let
-                     [s1 (+ (/ (:s transform) 1e6) 1)              ;; scale
+                     [s1 (+ (/ (:s transform) 1e6) 1)           ;; scale
                       rx (radians (/ (:rx transform) 3600))     ;; x-rotation: normalise arcseconds to radians
                       ry (radians (/ (:ry transform) 3600))     ;; y-rotation: normalise arcseconds to radians
                       rz (radians (/ (:rz transform) 3600))     ;; z-rotation: normalise arcseconds to radians
@@ -117,7 +155,9 @@
       #(if (number? (t %)) (hash-map % (- 0 (t %)))) ;; (hash-map % (t %)))
       (keys t))))
 
-(inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0    :rz  0.156  })
+
+;; (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0    :rz  0.156  })
+
 
 (defn to-fixed
   "Round the number `n` to `p` places after the decimal point."
@@ -126,19 +166,13 @@
     (double (/ (int (*' n m)) m))))
 
 
-(defn to-datum
-  ;; TODO: this obviously doesn't work but I'm trying to debug a compilation problem
-  [geopoint datum]
-  geopoint)
-
-
 ;; (to-fixed 1234.56789 4)
+
 
 (defrecord GeoPoint
   [latitude longitude datum]
-  ;;   "A point with an `x` co-ordinate, a `y` co-ordinate, and a datum `d`. We're
-  ;;   agnostic as to whether `d` is passed as a keyword or a map, but it must be
-  ;;   taken from `datums`, q.v."
+  ;;   "A point with an `x` co-ordinate, a `y` co-ordinate, and a datum `d`. `d`
+  ;;    must be a key taken from `datums`, q.v."
   Location
   (datum [location]
          (cond
@@ -156,38 +190,37 @@
              (:ellipsoid (datum [location])))
   (vector3d [this] (geopoint-to-vector3d this))
   (geopoint [location new-datum]
-            (let [od (datum location)
-                  nd (if (keyword? new-datum) (datums new-datum) new-datum)
-                  c (vector3d location)]
-              (cond
-                (= od nd) location
-                (= (:key od) :WGS84) (geopoint
-                                       (apply-transform c (:transform nd))
-                                       (:datum location))
-                (= (:key nd) :WGS84) (geopoint
-                                       (apply-transform
-                                         c
-                                         (inverse-transform (datums (:datum location))))
-                                       (:datum location))
-                true
-                (to-datum (to-datum location :WGS84) nd))))
+    (println (str "(geopoint " location " " new-datum ")"))
+    (if
+      (= (:datum location) new-datum)
+      location
+      (let [od (datum location)
+            nd (datums new-datum)
+            c (vector3d location)]
+        (cond
+          (= od nd) location
+          (= (:key od) :WGS84) (geopoint
+                                 (apply-transform c (:transform nd))
+                                 (:datum location))
+          (= (:key nd) :WGS84) (geopoint
+                                 (apply-transform
+                                   c
+                                   (inverse-transform
+                                     (:transform od)))
+                                 (:datum location))
+          true
+          (geopoint (geopoint location :WGS84) new-datum)))))
   (latitude [location]
-            (:latitude (to-datum location :WGS84)))
+            (:latitude (geopoint location :WGS84)))
   (longitude [location]
-             (:longitude (to-datum location :WGS84)))
+             (:longitude (geopoint location :WGS84)))
   (grid-x [location]
           (:e (osgrid location (:datum location))))
   (grid-y [location]
           (:n (osgrid location (:datum location))))
   (osgrid [location datum]
-          (geopoint-to-osgrid location (:datum location))))
+          (geopoint-to-osgrid location datum)))
 
-(def location (GeoPoint. 54.8240911 -3.9170342 :WGS84))
-(def od (datum location))
-(def nd (datums :NTF))
-(def c (vector3d location))
-
-(apply-transform c (:transform nd))
 
 (defrecord OsGrid
   [e n]
@@ -207,11 +240,13 @@
 
 
 (defn vector3d-to-geopoint
+  ;; My initial design decision to allow datums to be passed as keywords or as maps
+  ;; was WRONG: a datum SHALL BE passed as a map
   [this datum]
   (let
-    [a (:a (:ellipsoid datum))
-     b (:b (:ellipsoid datum))
-     f (:f (:ellipsoid datum))
+    [a (:a (:ellipsoid (datums datum)))
+     b (:b (:ellipsoid (datums datum)))
+     f (:f (:ellipsoid (datums datum)))
      e² (- (* 2 f) (* f f)) ;; first eccentricity squared
      ε² (/ e² (- 1 e²)) ;; second eccentricity squared
      p (sqrt (+ (* (.x this) (.x this)) (* (.y this) (.y this))))
@@ -231,9 +266,9 @@
 
 
 (defn geopoint-to-osgrid
-  [geopoint datum]
+  [gp datum]
   ;; for bizarrely over-complicated trigonometry, look no further.
-  (let [point (.geopoint geopoint (or datum :OSGB36))
+  (let [point (geopoint gp datum)
         φ     (radians (latitude point))
         λ     (radians (longitude point))
         a     6377563.396       ;; Airy 1830 major & minor semi-axes
@@ -259,7 +294,7 @@
         cosφ  (cos φ)
         v     (* a (/ F0 (sqrt (- 1 (* e² sin²φ)))))
         ;; nu = transverse radius of curvature
-        ρ     (/ (* a F0 (- 1 e²)) (pow (- 1 (* e² sin²φ)) 1.5))
+        ρ     (/ (* a F0 (- 1 e²)) (expt (- 1 (* e² sin²φ)) 1.5))
         ;; rho = meridional radius of curvature
         η2    (/ v (- ρ 1))     ;; beware confusing η2 with n²
         Ma    (* (+ 1 n (* (/ 5 4) n²) (* (/ 5 4) n³)) Δφ)
@@ -299,11 +334,8 @@
 
 (defn geopoint-to-vector3d
   [geopoint]
-  (let [datum (cond
-               (keyword? (:datum geopoint))
-               (datums (:datum geopoint))
-               (map? (:datum geopoint))
-               (:datum geopoint))
+  (println (str "(geopoint-to-vector3d " geopoint ")"))
+  (let [datum (datum geopoint)
         φ (radians (latitude geopoint))
         λ (radians (longitude geopoint))
         h 0
@@ -324,7 +356,7 @@
 (defn osgrid-to-geopoint
   [osgrid datum]
   (let
-    [d     (or datum :WGS84)
+    [d     datum
      E     (.e osgrid)
      N     (.n osgrid)
      a     6377563.396         ;; Airy 1830 major semi-axis
@@ -362,7 +394,7 @@
      v⁵    (reduce * 1 (repeat 5 v))
      v⁷    (reduce * 1 (repeat 7 v))
      ;; nu = transverse radius of curvature
-     ρ     (/ (* a F0 (- 1 e²)) (pow (- 1 (* e² sin²φ)) 1.5))
+     ρ     (/ (* a F0 (- 1 e²)) (expt (- 1 (* e² sin²φ)) 1.5))
      ;; rho = meridional radius of curvature
      η2    (/ v (- ρ 1))     ;; beware confusing η2 with n²
      tanφ  (tan φ)
@@ -391,11 +423,13 @@
      Δe⁶   (reduce * 1 (repeat 6 Δe))
      Δe⁷   (reduce * 1 (repeat 6 Δe))
      φ₁    (+ φ (- 0 (+ VII Δe²)) (* VIII Δe⁴) (- 0 (* IX Δe⁷)))
-     λ₁    (+ λ0 + (* X Δe) (- 0 (* XI Δe³)) (* IX Δe⁶) (- 0 (* XIIA Δe⁷)))]
+     λ₁    (+ λ0 (* X Δe) (- 0 (* XI Δe³)) (* IX Δe⁶) (- 0 (* XIIA Δe⁷)))]
     (.geopoint (GeoPoint. (degrees φ₁) (degrees λ₁) :OSGB36) datum)))
 
 
 (defn post-code-data-to-addresses
+  "`filename` is expected to be the path name of a JSON file containing records as documented
+  [here](https://apidocs.os.uk/docs/os-places-dpa-output)."
   [filename]
   (map
     (fn [a]
@@ -416,11 +450,44 @@
             :key-fn #(keyword (.toLowerCase %))))))))
 
 
-;; (def home (GeoPoint. 54.8240911 -3.9170342 :WGS84))
+;;(def home (GeoPoint. 54.8240911 -3.9170342 :WGS84))
 
-;; (.osgrid home :WGS84)
+;;
 
-;; (.datum home)
+;; (:datum home)
 ;; (datums (:datum home))
 ;; (:ellipsoid (datums (:datum home)))
+;; @@
+;; =>
+;;; {"type":"html","content":"<span class='clj-var'>#&#x27;yyy-data.core/home</span>","value":"#'yyy-data.core/home"}
+;; <=
 
+;; @@
+;;(.osgrid home :WGS84)
+;; @@
+
+;; @@
+;;(:datum home)
+
+;; @@
+;; =>
+;;; {"type":"html","content":"<span class='clj-keyword'>:WGS84</span>","value":":WGS84"}
+;; <=
+
+;; @@
+;; (datums (:datum home))
+;; @@
+;; =>
+;;; {"type":"list-like","open":"<span class='clj-map'>{</span>","close":"<span class='clj-map'>}</span>","separator":", ","items":[{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:key</span>","value":":key"},{"type":"html","content":"<span class='clj-keyword'>:WGS84</span>","value":":WGS84"}],"value":"[:key :WGS84]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:ellipsoid</span>","value":":ellipsoid"},{"type":"list-like","open":"<span class='clj-map'>{</span>","close":"<span class='clj-map'>}</span>","separator":", ","items":[{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:a</span>","value":":a"},{"type":"html","content":"<span class='clj-long'>6378137</span>","value":"6378137"}],"value":"[:a 6378137]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:b</span>","value":":b"},{"type":"html","content":"<span class='clj-double'>6356752.314245</span>","value":"6356752.314245"}],"value":"[:b 6356752.314245]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:f</span>","value":":f"},{"type":"html","content":"<span class='clj-double'>0.0033528106647474805</span>","value":"0.0033528106647474805"}],"value":"[:f 0.0033528106647474805]"}],"value":"{:a 6378137, :b 6356752.314245, :f 0.0033528106647474805}"}],"value":"[:ellipsoid {:a 6378137, :b 6356752.314245, :f 0.0033528106647474805}]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:transform</span>","value":":transform"},{"type":"list-like","open":"<span class='clj-map'>{</span>","close":"<span class='clj-map'>}</span>","separator":", ","items":[{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:tx</span>","value":":tx"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:tx 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:ty</span>","value":":ty"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:ty 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:tz</span>","value":":tz"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:tz 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:s</span>","value":":s"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:s 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:rx</span>","value":":rx"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:rx 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:ry</span>","value":":ry"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:ry 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:rz</span>","value":":rz"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:rz 0.0]"}],"value":"{:tx 0.0, :ty 0.0, :tz 0.0, :s 0.0, :rx 0.0, :ry 0.0, :rz 0.0}"}],"value":"[:transform {:tx 0.0, :ty 0.0, :tz 0.0, :s 0.0, :rx 0.0, :ry 0.0, :rz 0.0}]"}],"value":"{:key :WGS84, :ellipsoid {:a 6378137, :b 6356752.314245, :f 0.0033528106647474805}, :transform {:tx 0.0, :ty 0.0, :tz 0.0, :s 0.0, :rx 0.0, :ry 0.0, :rz 0.0}}"}
+;; <=
+
+;; @@
+*ns*
+;; @@
+;; =>
+;;; {"type":"html","content":"<span class='clj-unkown'>#namespace[yyy-data.core]</span>","value":"#namespace[yyy-data.core]"}
+;; <=
+
+;; @@
+
+;; @@
