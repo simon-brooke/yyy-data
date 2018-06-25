@@ -33,7 +33,7 @@
   accurate to better than ±1 metre. No transformation should be assumed to be accurate to better
   than a meter; for many datums somewhat less.
 
-  Yes, I know that the plural of datums is data..."
+  Yes, I know that the plural of datum is data..."
   {
     ;; transforms: t in metres, s in ppm, r in arcseconds                               tx            ty           tz           s          rx          ry           rz
     :ED50        { :key :ED50       :ellipsoid (ellipsoids :Intl1924)      :transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  }}
@@ -101,7 +101,7 @@
                            (- 0 (* (.x this) ry))
                            (* (.y this) rx)
                            (* (.z this) s1))]
-                     (.Vector3d x2 y2 z2))))
+                     (Vector3d. x2 y2 z2))))
 
 
 (defn inverse-transform
@@ -114,10 +114,10 @@
     merge
     {}
     (map
-      #(if (number? (t %)) (hash-map % (- 0 (t %))) (hash-map % (t %)))
+      #(if (number? (t %)) (hash-map % (- 0 (t %)))) ;; (hash-map % (t %)))
       (keys t))))
 
-;; (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0    :rz  0.156  })
+(inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0    :rz  0.156  })
 
 (defn to-fixed
   "Round the number `n` to `p` places after the decimal point."
@@ -142,16 +142,16 @@
   Location
   (datum [location]
          (cond
-           (keyword? (:d location))
-           (datums (:d location))
-           (map? (:d location))
-           (:d location)))
+           (keyword? (:datum location))
+           (datums (:datum location))
+           (map? (:datum location))
+           (:datum location)))
   (datum-key [location]
              (cond
-               (keyword? (:d location))
-               (:d location)
-               (map? (:d location))
-               (:key (:d location))))
+               (keyword? (:datum location))
+               (:datum location)
+               (map? (:datum location))
+               (:key (:datum location))))
   (ellipsoid [location]
              (:ellipsoid (datum [location])))
   (vector3d [this] (geopoint-to-vector3d this))
@@ -167,7 +167,7 @@
                 (= (:key nd) :WGS84) (geopoint
                                        (apply-transform
                                          c
-                                         (inverse-transform (:datum location)))
+                                         (inverse-transform (datums (:datum location))))
                                        (:datum location))
                 true
                 (to-datum (to-datum location :WGS84) nd))))
@@ -182,7 +182,13 @@
   (osgrid [location datum]
           (geopoint-to-osgrid location (:datum location))))
 
-;; clojure.lang.Compiler$CompilerException: java.lang.ClassCastException: clojure.lang.PersistentList cannot be cast to clojure.lang.IPersistentVector, compiling:(/home/simon/workspace/yyy-data/src/yyy_data/core.clj:129:1)
+(def location (GeoPoint. 54.8240911 -3.9170342 :WGS84))
+(def od (datum location))
+(def nd (datums :NTF))
+(def c (vector3d location))
+
+(apply-transform c (:transform nd))
+
 (defrecord OsGrid
   [e n]
   Location
@@ -227,7 +233,7 @@
 (defn geopoint-to-osgrid
   [geopoint datum]
   ;; for bizarrely over-complicated trigonometry, look no further.
-  (let [point (geopoint geopoint (or datum :OSGB36))
+  (let [point (.geopoint geopoint (or datum :OSGB36))
         φ     (radians (latitude point))
         λ     (radians (longitude point))
         a     6377563.396       ;; Airy 1830 major & minor semi-axes
@@ -293,11 +299,16 @@
 
 (defn geopoint-to-vector3d
   [geopoint]
-  (let [φ (radians (latitude geopoint))
+  (let [datum (cond
+               (keyword? (:datum geopoint))
+               (datums (:datum geopoint))
+               (map? (:datum geopoint))
+               (:datum geopoint))
+        φ (radians (latitude geopoint))
         λ (radians (longitude geopoint))
         h 0
-        a (:a (:ellipsoid (:datum geopoint)))
-        f (:f (:ellipsoid (:datum geopoint)))
+        a (:a (:ellipsoid datum))
+        f (:f (:ellipsoid datum))
         sinφ (sin φ)
         cosφ (cos φ)
         sinλ (sin λ)
@@ -403,3 +414,13 @@
           (json/read-str
             (slurp filename)
             :key-fn #(keyword (.toLowerCase %))))))))
+
+
+;; (def home (GeoPoint. 54.8240911 -3.9170342 :WGS84))
+
+;; (.osgrid home :WGS84)
+
+;; (.datum home)
+;; (datums (:datum home))
+;; (:ellipsoid (datums (:datum home)))
+
