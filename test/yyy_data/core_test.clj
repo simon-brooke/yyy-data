@@ -53,13 +53,58 @@
     (let
       [hazelfield (yyy_data.core.OsGrid. 277656 549165)
        latlon (geopoint hazelfield :WGS84)
-       hazelfield' (osgrid latlon :WGS84)]
+       actual (osgrid latlon :WGS84)]
       (is
-        (< (abs (- (:e hazelfield) (:e hazelfield'))) 0.001)
+        (< (abs (- (:e hazelfield) (:e actual))) 0.001)
           (str "Components should be close to one another: easting: "
-               (:e hazelfield) ", " (:e hazelfield')))
+               (:e hazelfield) ", " (:e actual)))
       (is
-        (< (abs (- (:n hazelfield) (:n hazelfield'))) 0.001)
+        (< (abs (- (:n hazelfield) (:n actual))) 0.001)
           (str "Components should be close to one another: northing: "
-               (:n hazelfield) ", " (:n hazelfield'))))))
+               (:n hazelfield) ", " (:n actual))))))
 
+
+(deftest geopoint-to-vector-round-trip-tests
+  (testing "round trip geopoint->vector->geopoint"
+    (let
+      [hazelfield (yyy_data.core.GeoPoint. 54.822218 -3.906009 :WGS84)
+       v (vector3d hazelfield)
+       actual (geopoint v :WGS84)]
+      (is
+        (< (abs (- (:latitude actual) 54.822218)) 0.001)
+        (str "Latitude should be 54.822219: "  (:latitude actual)))
+      (is
+        (< (abs (- (:longitude actual) -3.906009)) 0.001)
+        (str "Longitude should be -3.906009: "  (:longitude actual))))))
+
+
+(deftest osgrid-to-vector-round-trip-tests
+  (testing "round trip osgrid->vector->osgrid"
+    (let
+      [hazelfield (yyy_data.core.OsGrid. 277656 549165)
+       v (vector3d hazelfield)
+       actual (osgrid v :WGS84)]
+      (is
+        (< (abs (- (:e hazelfield) (:e actual))) 0.001)
+        (str "Components should be close to one another: easting: "
+             (:e hazelfield) ", " (:e actual)))
+      (is
+        (< (abs (- (:n hazelfield) (:n actual))) 0.001)
+        (str "Components should be close to one another: northing: "
+             (:n hazelfield) ", " (:n actual))))))
+
+
+;; Currently blows up horribly (mutual recursion/stack). But I currently
+;; don't need it to work.
+;; (deftest geopoint-change-datum-round-trip-wgs84-tests
+;;   (testing "round trip geopoint/wgs84->geopoint/osgb36->geopoint/wgs84"
+;;     (let
+;;       [hazelfield (yyy_data.core.GeoPoint. 54.822218 -3.906009 :WGS84)
+;;        gp (geopoint hazelfield :OSGB36)
+;;        actual (geopoint gp :WGS84)]
+;;       (is
+;;         (< (abs (- (:latitude actual) 54.822218)) 0.001)
+;;         (str "Latitude should be 54.822219: "  (:latitude actual)))
+;;       (is
+;;         (< (abs (- (:longitude actual) -3.906009)) 0.001)
+;;         (str "Longitude should be -3.906009: "  (:longitude actual))))))

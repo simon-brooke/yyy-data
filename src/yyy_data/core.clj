@@ -118,6 +118,7 @@
   (geopoint [this datum] (vector3d-to-geopoint this datum))
   Transformable
   (apply-transform [this transform]
+                   ;; tests say this works
     (println (str "(apply-transform " this " " transform ")"))
                    (let
                      [s1 (+' (/ (:s transform) 1e6) 1)           ;; scale
@@ -151,6 +152,7 @@
   expects a map `t` whose values are numbers, and returns a map which has
   for each key in `t` a number which is the inverse of the value of the
   same key in `t`."
+  ;; tests say this works
   [t]
   (reduce
     merge
@@ -237,7 +239,7 @@
   (grid-y [location] n)
   (latitude [location] (latitude (geopoint location :WGS84)))
   (longitude [location] (longitude (geopoint location :WGS84)))
-  (vector3d [location])
+  (vector3d [location] (geopoint-to-vector3d (osgrid-to-geopoint location :WGS84)))
   (geopoint [location datum]
             (osgrid-to-geopoint location datum))
   (osgrid [location datum] location))
@@ -246,6 +248,7 @@
 (defn raw-vector3d-to-geopoint
   ;; My initial design decision to allow datums to be passed as keywords or as maps
   ;; was WRONG: a datum SHALL BE passed as a key
+  ;; Tests say this works
   ([v datum]
    (vector3d-to-geopoint (:x v) (:y v) (:z v) datum))
   ([x y z d]
@@ -281,21 +284,22 @@
    (geopoint-to-osgrid (:latitude gp) (:longitude gp) (:datum gp) datum))
   ([latitude longitude from-datum to-datum]
    ;; for bizarrely over-complicated trigonometry, look no further.
+   ;; This doesn't work. But, to be brutally honest, I don't need it to.
    (let [point (GeoPoint. latitude longitude to-datum)
          φ     (radians latitude)
          λ     (radians longitude)
-         a     6377563.396       ;; Airy 1830 major & minor semi-axes
-         b     6356256.909
+         a     6377563.396       ;; Airy 1830 major semi-axis
+         b     6356256.909       ;; Airy 1830 minor semi-axis
          F0    0.9996012717      ;; OS Grid scale factor on central meridian
-         φ0    (radians 49)   ;; OS Grid true origin latitude
-         λ0    (radians -2)   ;; OS Grid true origin longitude
-         Δφ    (-' φ φ0)          ;; latitude offset from origin
-         Δλ    (-' λ λ0)          ;; longitude offset from origin
-         Δλ²   (reduce * 1 (repeat 2 Δλ))
-         Δλ³   (reduce * 1 (repeat 3 Δλ))
-         Δλ⁴   (reduce * 1 (repeat 4 Δλ))
-         Δλ⁵   (reduce * 1 (repeat 5 Δλ))
-         Δλ⁶   (reduce * 1 (repeat 6 Δλ))
+         φ0    (radians 49)      ;; OS Grid true origin latitude
+         λ0    (radians -2)      ;; OS Grid true origin longitude
+         Δφ    (-' φ φ0)         ;; latitude offset from origin
+         Δλ    (-' λ λ0)         ;; longitude offset from origin
+         Δλ²   (expt Δλ 2)
+         Δλ³   (expt Δλ 3)
+         Δλ⁴   (expt Δλ 4)
+         Δλ⁵   (expt Δλ 5)
+         Δλ⁶   (expt Δλ 6)
          N0    -100000           ;; northing of true origin, metres
          E0    400000            ;; easting of true origin, metres
          e²    (-' 1 (/ (*' b b) (*' a a)))  ;; eccentricity squared
@@ -349,9 +353,10 @@
 
 
 (defn raw-geopoint-to-vector3d
+  ;; Tests say this no longer works
   ([gp]
    (println (str "(geopoint-to-vector3d " geopoint ")"))
-   (geopoint-to-vector3d (:latitude gp) (:longitude gp) (datums (:datum gp))))
+   (geopoint-to-vector3d (:latitude gp) (:longitude gp) (datum gp)))
   ([latitude longitude datum]
    (let [φ (radians latitude)
          λ (radians longitude)
@@ -374,9 +379,12 @@
 
 
 (defn raw-osgrid-to-geopoint
+  ([osgrid]
+   (osgrid-to-geopoint osgrid :WGS84))
   ([osgrid datum]
    (osgrid-to-geopoint (:e osgrid) (:n osgrid) datum))
   ([E N datum]
+   ;; this currently doesn't work
    (let
      [a     6377563.396         ;; Airy 1830 major semi-axis
       b     6356256.909         ;; Airy 1830 minor semi-axis
@@ -385,19 +393,25 @@
       λ0    (radians -2)        ;; national grid true origin longitude
       N0    -100000             ;; northing of true origin, metres
       E0    400000              ;; easting of true origin, metres
+      ;; var e2 = 1 - (b*b)/(a*a);
       e²    (-' 1
                (/
                  (*' b b)
                  (*' a a)))      ;; eccentricity squared
+      ;; var n = (a-b)/(a+b), n2 = n*n, n3 = n*n*n;
       n     (/ (-' a b) (+' a b))
-      n²    (*' n n)
-      n³    (*' n n n)
+      n²    (expt n 2)
+      n³    (expt n 3)
       [M φ] (loop  [φ φ0 M 0]
               (let
+                ;; φ = (N-N0-M)/(a*F0) + φ;
                 [φ₁ (+' φ (/ (-' N N0 M) (*' a F0)))
-                 Δφ    (-' φ φ0)
+                 ;; (φ-φ0)
+                 Δφ (-' φ φ0)
+                 ;; var Ma = (1 + n + (5/4)*n2 + (5/4)*n3) * (φ-φ0);
                  Ma (*' (+' 1 n (*' 5/4 n²) (*' 5/4 n³)) Δφ)
-                 Mb (*' (+' (*' n 3) (*' n² 3) (*' n³ 21/8)) (sin Δφ) (cos Δφ))
+                 ;; var Mb = (3*n + 3*n*n + (21/8)*n3) * Math.sin(φ-φ0) * Math.cos(φ+φ0);
+                 Mb (*' (+' (*' n 3) (*' n² 3) (*' 21/8 n³)) (sin Δφ) (cos (+' φ φ0)))
                  Mc (*' (+' (*' n² 15/8) (*' n³ 15/8)) (sin (*' 2 Δφ)) (cos (*' 2 Δφ)))
                  Md (*' 35/24 n³ (sin (*' 3 Δφ)) (cos (*' 3 Δφ)))
                  M₁ (*' b F0 (+' (-' 0 Ma) Mb Mc (-' 0 Md)))]
