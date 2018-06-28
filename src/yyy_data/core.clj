@@ -30,7 +30,9 @@
 ;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;;; There are a number of bad design decisions in my implementation of this.
+;;; Coordinate system conversion cribbed from https://www.movable-type.co.uk/scripts/latlong-os-gridref.html
+
+;;; There are a number of bad design decisions in my re-implementation of this.
 ;;; Using protocols and records was probably a mistake.
 ;;;
 ;;; The decision not only to adopt but to extend the untypable variable names
@@ -95,8 +97,7 @@
   (latitude [location])
   (longitude [location])
   (osgrid [location datum])
-  (vector3d [location])
-  )
+  (vector3d [location]))
 
 
 (defprotocol Transformable
@@ -119,26 +120,29 @@
   (apply-transform [this transform]
     (println (str "(apply-transform " this " " transform ")"))
                    (let
-                     [s1 (+ (/ (:s transform) 1e6) 1)           ;; scale
+                     [s1 (+' (/ (:s transform) 1e6) 1)           ;; scale
                       rx (radians (/ (:rx transform) 3600))     ;; x-rotation: normalise arcseconds to radians
                       ry (radians (/ (:ry transform) 3600))     ;; y-rotation: normalise arcseconds to radians
                       rz (radians (/ (:rz transform) 3600))     ;; z-rotation: normalise arcseconds to radians
-                      x2 (-
-                           (+ (:tx transform)
-                              (* (.x this) s1))
-                           (+
-                             (* (.y this) rz)
-                             (* (.z this) ry)))
-                      y2 (+
+;;                       var x2 = tx + x1*s1 - y1*rz + z1*ry;
+                      x2 (-'
+                           (+' (:tx transform)
+                              (*' (:x this) s1))
+                           (+'
+                             (*' (:y this) rz)
+                             (*' (:z this) ry)))
+;;                       var y2 = ty + x1*rz + y1*s1 - z1*rx;
+                      y2 (+'
                            (:ty transform)
-                           (* (.x this) rz)
-                           (* (.y this) s1)
-                           (- 0 (* (.z this) rx)))
-                      z2 (+
-                           (.z this)
-                           (- 0 (* (.x this) ry))
-                           (* (.y this) rx)
-                           (* (.z this) s1))]
+                           (*' (:x this) rz)
+                           (*' (:y this) s1)
+                           (-' 0 (*' (:z this) rx)))
+;;                       var z2 = tz - x1*ry + y1*rx + z1*s1;
+                      z2 (+'
+                           (:tz transform)
+                           (-' 0 (*' (:x this) ry))
+                           (*' (:y this) rx)
+                           (*' (:z this) s1))]
                      (Vector3d. x2 y2 z2))))
 
 
@@ -152,7 +156,7 @@
     merge
     {}
     (map
-      #(if (number? (t %)) (hash-map % (- 0 (t %)))) ;; (hash-map % (t %)))
+      #(if (number? (t %)) (hash-map % (-' 0 (t %)))) ;; (hash-map % (t %)))
       (keys t))))
 
 
@@ -163,7 +167,7 @@
   "Round the number `n` to `p` places after the decimal point."
   [n p]
   (let [m (reduce *' 1 (repeat p 10))]
-    (double (/ (int (*' n m)) m))))
+    (double (/ (bigint (*' n m)) m))))
 
 
 ;; (to-fixed 1234.56789 4)
@@ -196,10 +200,10 @@
       location
       (let [od (datum location)
             nd (datums new-datum)
-            c (vector3d location)]
+            c (geopoint-to-vector3d location)]
         (cond
           (= od nd) location
-          (= (:key od) :WGS84) (geopoint
+          (= (:key od) :WGS84) (vector3d-to-geopoint
                                  (apply-transform c (:transform nd))
                                  (:datum location))
           (= (:key nd) :WGS84) (geopoint
@@ -239,192 +243,210 @@
   (osgrid [location datum] location))
 
 
-(defn vector3d-to-geopoint
+(defn raw-vector3d-to-geopoint
   ;; My initial design decision to allow datums to be passed as keywords or as maps
-  ;; was WRONG: a datum SHALL BE passed as a map
-  [this datum]
-  (let
-    [a (:a (:ellipsoid (datums datum)))
-     b (:b (:ellipsoid (datums datum)))
-     f (:f (:ellipsoid (datums datum)))
-     e² (- (* 2 f) (* f f)) ;; first eccentricity squared
-     ε² (/ e² (- 1 e²)) ;; second eccentricity squared
-     p (sqrt (+ (* (.x this) (.x this)) (* (.y this) (.y this))))
-     ;; distance from minor radius
-     R (sqrt (+ (* p p) (* (:z this) (:z this))))
-     ;; polar radius
-     tanβ (* (/ (* b (:z this))(* a p)) (/ (* b (+ 1 ε²)) R))
-     sinβ (/ tanβ (sqrt (+ 1 (* tanβ tanβ))))
-     cosβ (/ sinβ tanβ)
-     φ (if
-         (Double/isNaN cosβ) 0
-         (atan2 (+ (.z this) (* ε² b sinβ sinβ sinβ))
-                (- p (* e² a cosβ cosβ cosβ))))
-     λ (atan2 (:y this) (:x this))
-     v (/ a (sqrt (- 1 (* e² (sin φ) (sin φ)))))]
-    (GeoPoint. (degrees φ) (degrees λ) datum)))
+  ;; was WRONG: a datum SHALL BE passed as a key
+  ([v datum]
+   (vector3d-to-geopoint (:x v) (:y v) (:z v) datum))
+  ([x y z d]
+   (let
+     [a (:a (:ellipsoid (datums d)))
+      b (:b (:ellipsoid (datums d)))
+      f (:f (:ellipsoid (datums d)))
+      e² (-' (*' 2 f) (*' f f)) ;; first eccentricity squared
+      ε² (/ e² (-' 1 e²)) ;; second eccentricity squared
+      p (sqrt (+' (*' x x) (*' y y)))
+      ;; distance from minor radius
+      R (sqrt (+' (*' p p) (*' z z)))
+      ;; polar radius
+      tanβ (*' (/ (*' b z)(*' a p)) (/ (*' b (+' 1 ε²)) R))
+      sinβ (/ tanβ (sqrt (+' 1 (*' tanβ tanβ))))
+      cosβ (/ sinβ tanβ)
+      φ (if
+          (Double/isNaN cosβ) 0
+          (atan2 (+' z (*' ε² b sinβ sinβ sinβ))
+                 (-' p (*' e² a cosβ cosβ cosβ))))
+      λ (atan2 y x)
+      v (/ a (sqrt (-' 1 (*' e² (sin φ) (sin φ)))))]
+     (GeoPoint. (degrees φ) (degrees λ) d))))
 
 
-(defn geopoint-to-osgrid
-  [gp datum]
-  ;; for bizarrely over-complicated trigonometry, look no further.
-  (let [point (geopoint gp datum)
-        φ     (radians (latitude point))
-        λ     (radians (longitude point))
-        a     6377563.396       ;; Airy 1830 major & minor semi-axes
-        b     6356256.909
-        F0    0.9996012717      ;; OS Grid scale factor on central meridian
-        φ0    (radians 49)   ;; OS Grid true origin latitude
-        λ0    (radians -2)   ;; OS Grid true origin longitude
-        Δφ    (- φ φ0)          ;; latitude offset from origin
-        Δλ    (- λ λ0)          ;; longitude offset from origin
-        Δλ²   (reduce * 1 (repeat 2 Δλ))
-        Δλ³   (reduce * 1 (repeat 3 Δλ))
-        Δλ⁴   (reduce * 1 (repeat 4 Δλ))
-        Δλ⁵   (reduce * 1 (repeat 5 Δλ))
-        Δλ⁶   (reduce * 1 (repeat 6 Δλ))
-        N0    -100000           ;; northing of true origin, metres
-        E0    400000            ;; easting of true origin, metres
-        e²    (- 1 (/ (* b b) (* a a)))  ;; eccentricity squared
-        n     (/ (- a b) (+ a b))
-        n²    (* n n)
-        n³    (* n n n)
-        sinφ  (sin φ)
-        sin²φ (* (sin φ) (sin φ))
-        cosφ  (cos φ)
-        v     (* a (/ F0 (sqrt (- 1 (* e² sin²φ)))))
-        ;; nu = transverse radius of curvature
-        ρ     (/ (* a F0 (- 1 e²)) (expt (- 1 (* e² sin²φ)) 1.5))
-        ;; rho = meridional radius of curvature
-        η2    (/ v (- ρ 1))     ;; beware confusing η2 with n²
-        Ma    (* (+ 1 n (* (/ 5 4) n²) (* (/ 5 4) n³)) Δφ)
-        Mb    (*
-                (+ (* 3 n) (* 3 n²) (* (/ 21 8) n³))
-                (sin Δφ) (cos (+ φ φ0)))
-        Mc    (*
-                (+ (* (/ 15 8) n²) (* (/ 15 8) n³))
-                (sin (* 2 Δφ)) (cos (* 2 (+ φ φ0))))
-        Md    (* (/ 35 24) n³ (sin (* 3 Δφ)) (cos (* 3 (+ φ φ0))))
-        M     (* b F0 (+ (- Ma Mb) (- Mc Md)))
-        ;; meridional arc
-        cos³φ (reduce * 1 (repeat 3 cosφ))
-        cos⁵φ (reduce * 1 (repeat 5 cosφ))
-        tan²φ (reduce * 1 (repeat 2 (tan φ)))
-        tan⁴φ (reduce * 1 (repeat 4 (tan φ)))
-        I     (+ M N0)
-        II    (* (/ v 2) sinφ cosφ)
-        III   (* (/ v 24) sinφ cos³φ (- 5 (+ tan²φ (* 9 η2))))
-        ;; var IIIA = (ν/720)*sinφ*cos5φ*(61-58*tan2φ+tan4φ);
-        ;; TODO: CHECK JAVASCRIPT OPERATOR PRECEDENCE!
-        IIIA  (* (/ v 720) sinφ cos⁵φ (- 61 (+ (* 58 tan²φ) tan⁴φ)))
-        IV    (* v cosφ)
-        V     (* (/ v 6) cos³φ (- (/ v ρ) tan²φ))
-        ;; var VI = (ν/120) * cos5φ * (5 - 18*tan2φ + tan4φ + 14*η2 - 58*tan2φ*η2);
-        VI    (*
-                (/ v 120)
-                cos⁵φ
-                (- 5
-                   (+ (* 18 tan²φ)
-                      tan⁴φ
-                      (* 14 η2) (- 0 (* 58 tan²φ η2)))))
-        N     (to-fixed (+ I (* II Δλ²) (+ III Δλ⁴) (* IIIA Δλ⁶)) 3)
-        E     (to-fixed (+ E0 (* IV Δλ) (* V Δλ³) (* VI Δλ⁵)) 3)]
-    (OsGrid. E N)))
+;; memoisation here is used more to break mutual recursion than to speed things
+;; up, although of course it will also speed things up a bit.
+(def vector3d-to-geopoint (memoize raw-vector3d-to-geopoint))
 
 
-(defn geopoint-to-vector3d
-  [geopoint]
-  (println (str "(geopoint-to-vector3d " geopoint ")"))
-  (let [datum (datum geopoint)
-        φ (radians (latitude geopoint))
-        λ (radians (longitude geopoint))
-        h 0
-        a (:a (:ellipsoid datum))
-        f (:f (:ellipsoid datum))
-        sinφ (sin φ)
-        cosφ (cos φ)
-        sinλ (sin λ)
-        cosλ (cos λ)
-        e² (- (* 2 f) (* f f))
-        v (/ a (sqrt (- 1 (* e² sinφ sinφ))))]
-    (Vector3d.
-      (* (+ v h) cosφ cosλ)
-      (* (+ v h) cosφ sinλ)
-      (* v (+ h (- 1 e²)) sinφ))))
+(defn raw-geopoint-to-osgrid
+  ([gp datum]
+   (geopoint-to-osgrid (:latitude gp) (:longitude gp) (:datum gp) datum))
+  ([latitude longitude from-datum to-datum]
+   ;; for bizarrely over-complicated trigonometry, look no further.
+   (let [point (GeoPoint. latitude longitude to-datum)
+         φ     (radians latitude)
+         λ     (radians longitude)
+         a     6377563.396       ;; Airy 1830 major & minor semi-axes
+         b     6356256.909
+         F0    0.9996012717      ;; OS Grid scale factor on central meridian
+         φ0    (radians 49)   ;; OS Grid true origin latitude
+         λ0    (radians -2)   ;; OS Grid true origin longitude
+         Δφ    (-' φ φ0)          ;; latitude offset from origin
+         Δλ    (-' λ λ0)          ;; longitude offset from origin
+         Δλ²   (reduce * 1 (repeat 2 Δλ))
+         Δλ³   (reduce * 1 (repeat 3 Δλ))
+         Δλ⁴   (reduce * 1 (repeat 4 Δλ))
+         Δλ⁵   (reduce * 1 (repeat 5 Δλ))
+         Δλ⁶   (reduce * 1 (repeat 6 Δλ))
+         N0    -100000           ;; northing of true origin, metres
+         E0    400000            ;; easting of true origin, metres
+         e²    (-' 1 (/ (*' b b) (*' a a)))  ;; eccentricity squared
+         n     (/ (-' a b) (+' a b))
+         n²    (*' n n)
+         n³    (*' n n n)
+         sinφ  (sin φ)
+         sin²φ (*' (sin φ) (sin φ))
+         cosφ  (cos φ)
+         v     (*' a (/ F0 (sqrt (-' 1 (*' e² sin²φ)))))
+         ;; nu = transverse radius of curvature
+         ρ     (/ (*' a F0 (-' 1 e²)) (expt (-' 1 (*' e² sin²φ)) 1.5))
+         ;; rho = meridional radius of curvature
+         η2    (/ v (-' ρ 1))     ;; beware confusing η2 with n²
+         Ma    (*' (+' 1 n (*' (/ 5 4) n²) (*' (/ 5 4) n³)) Δφ)
+         Mb    (*
+                 (+' (*' 3 n) (*' 3 n²) (*' (/ 21 8) n³))
+                 (sin Δφ) (cos (+' φ φ0)))
+         Mc    (*
+                 (+' (*' (/ 15 8) n²) (*' (/ 15 8) n³))
+                 (sin (*' 2 Δφ)) (cos (*' 2 (+' φ φ0))))
+         Md    (*' (/ 35 24) n³ (sin (*' 3 Δφ)) (cos (*' 3 (+' φ φ0))))
+         M     (*' b F0 (+' (-' Ma Mb) (-' Mc Md)))
+         ;; meridional arc
+         cos³φ (reduce * 1 (repeat 3 cosφ))
+         cos⁵φ (reduce * 1 (repeat 5 cosφ))
+         tan²φ (reduce * 1 (repeat 2 (tan φ)))
+         tan⁴φ (reduce * 1 (repeat 4 (tan φ)))
+         I     (+' M N0)
+         II    (*' (/ v 2) sinφ cosφ)
+         III   (*' (/ v 24) sinφ cos³φ (-' 5 (+' tan²φ (*' 9 η2))))
+         ;; var IIIA = (ν/720)*sinφ*cos5φ*(61-58*tan2φ+tan4φ);
+         ;; TODO: CHECK JAVASCRIPT OPERATOR PRECEDENCE!
+         IIIA  (*' (/ v 720) sinφ cos⁵φ (-' 61 (+' (*' 58 tan²φ) tan⁴φ)))
+         IV    (*' v cosφ)
+         V     (*' (/ v 6) cos³φ (-' (/ v ρ) tan²φ))
+         ;; var VI = (ν/120) * cos5φ * (5 - 18*tan2φ + tan4φ + 14*η2 - 58*tan2φ*η2);
+         VI    (*
+                 (/ v 120)
+                 cos⁵φ
+                 (-' 5
+                    (+' (*' 18 tan²φ)
+                       tan⁴φ
+                       (*' 14 η2) (-' 0 (*' 58 tan²φ η2)))))
+         N     (to-fixed (+' I (*' II Δλ²) (+' III Δλ⁴) (*' IIIA Δλ⁶)) 3)
+         E     (to-fixed (+' E0 (*' IV Δλ) (*' V Δλ³) (*' VI Δλ⁵)) 3)]
+     (OsGrid. E N))))
 
 
-(defn osgrid-to-geopoint
-  [osgrid datum]
-  (let
-    [d     datum
-     E     (.e osgrid)
-     N     (.n osgrid)
-     a     6377563.396         ;; Airy 1830 major semi-axis
-     b     6356256.909         ;; Airy 1830 minor semi-axis
-     F0    0.9996012717        ;; national grid scale factor on central meridian
-     φ0    (radians 49)     ;; national grid true origin latitude
-     λ0    (radians -2)     ;; national grid true origin longitude
-     N0    -100000             ;; northing of true origin, metres
-     E0    400000              ;; easting of true origin, metres
-     e²    (- 1
-              (/
-                (* b b)
-                (* a a)))      ;; eccentricity squared
-     n     (/ (- a b) (+ a b))
-     n²    (* n n)
-     n³    (* n n n)
-     [M φ] (loop  [φ φ0 M 0]
-             (let
-               [φ₁ (+ φ (/ (- N N0 M) (* a F0)))
-                Δφ    (- φ φ0)
-                Ma (* (+ 1 n (* 5/4 n²) (* 5/4 n³)) Δφ)
-                Mb (* (+ (* n 3) (* n² 3) (* n³ 21/8)) (sin Δφ) (cos Δφ))
-                Mc (* (+ (* n² 15/8) (* n³ 15/8)) (sin (* 2 Δφ)) (cos (* 2 Δφ)))
-                Md (* 35/24 n³ (sin (* 3 Δφ)) (cos (* 3 Δφ)))
-                M₁ (* b F0 (+ (- 0 Ma) Mb Mc (- 0 Md)))]
-               (if
-                 (>= (- N N0 M₁) 0.00001)
-                 (recur M₁ φ₁)
-                 [M₁ φ₁])))
-     sinφ  (sin φ)
-     sin²φ (* (sin φ) (sin φ))
-     cosφ  (cos φ)
-     v     (* a (/ F0 (sqrt (- 1 (* e² sin²φ)))))
-     v³    (reduce * 1 (repeat 3 v))
-     v⁵    (reduce * 1 (repeat 5 v))
-     v⁷    (reduce * 1 (repeat 7 v))
-     ;; nu = transverse radius of curvature
-     ρ     (/ (* a F0 (- 1 e²)) (expt (- 1 (* e² sin²φ)) 1.5))
-     ;; rho = meridional radius of curvature
-     η2    (/ v (- ρ 1))     ;; beware confusing η2 with n²
-     tanφ  (tan φ)
-     tan²φ (reduce * 1 (repeat 2 tanφ))
-     tan⁴φ (reduce * 1 (repeat 4 tanφ))
-     tan⁶φ (reduce * 1 (repeat 6 tanφ))
-     secφ  (/ 1 cosφ)
-     VII   (/ tanφ (* 2 ρ v))
-     ;; TODO: check Javascript operator precedence!
-     VIII  (* (/ tanφ (* 24 ρ v³) (+ 5 (* 3 tan²φ) η2 (- 0 (* 9 tan²φ η2)))))
-     ;;     var VIII = tanφ/(24*ρ*ν3)*(5+3*tan2φ+η2-9*tan2φ*η2);
-     IX    (* (/ tanφ (* 720 ρ v⁵)) (+ 61 (* 90 tan²φ) (* 45 tan⁴φ)))
-     ;;     var IX = tanφ/(720*ρ*ν5)*(61+90*tan2φ+45*tan4φ);
-     X     (/ secφ v)
-     XI    (* (/ secφ (* 6 v³)) (+ (/ v ρ) (* 2 tan²φ)))
-     ;;    var XI = secφ/(6*ν3)*(ν/ρ+2*tan2φ);
-     XII   (* (/ secφ (* 120 v⁵)) (+ 5 (* 28 tan²φ) (* 24 tan⁴φ)))
-     ;;    var XII = secφ/(120*ν5)*(5+28*tan2φ+24*tan4φ);
-     XIIA  (* (/ secφ (* 5040 v⁷)) (+ 61 (* 622 tan²φ) (* 1322 tan⁴φ) (* 720 tan⁶φ)))
-     ;;    var XIIA = secφ/(5040*ν7)*(61+662*tan2φ+1320*tan4φ+720*tan6φ);
-     Δe    (- E E0)
-     Δe²   (reduce * 1 (repeat 2 Δe))
-     Δe³   (reduce * 1 (repeat 3 Δe))
-     Δe⁴   (reduce * 1 (repeat 4 Δe))
-     Δe⁵   (reduce * 1 (repeat 5 Δe))
-     Δe⁶   (reduce * 1 (repeat 6 Δe))
-     Δe⁷   (reduce * 1 (repeat 6 Δe))
-     φ₁    (+ φ (- 0 (+ VII Δe²)) (* VIII Δe⁴) (- 0 (* IX Δe⁷)))
-     λ₁    (+ λ0 (* X Δe) (- 0 (* XI Δe³)) (* IX Δe⁶) (- 0 (* XIIA Δe⁷)))]
-    (.geopoint (GeoPoint. (degrees φ₁) (degrees λ₁) :OSGB36) datum)))
+(def geopoint-to-osgrid (memoize raw-geopoint-to-osgrid))
+
+
+(defn raw-geopoint-to-vector3d
+  ([gp]
+   (println (str "(geopoint-to-vector3d " geopoint ")"))
+   (geopoint-to-vector3d (:latitude gp) (:longitude gp) (datums (:datum gp))))
+  ([latitude longitude datum]
+   (let [φ (radians latitude)
+         λ (radians longitude)
+         h 0
+         a (:a (:ellipsoid datum))
+         f (:f (:ellipsoid datum))
+         sinφ (sin φ)
+         cosφ (cos φ)
+         sinλ (sin λ)
+         cosλ (cos λ)
+         e² (-' (*' 2 f) (*' f f))
+         v (/ a (sqrt (-' 1 (*' e² sinφ sinφ))))]
+     (Vector3d.
+       (*' (+' v h) cosφ cosλ)
+       (*' (+' v h) cosφ sinλ)
+       (*' v (+' h (-' 1 e²)) sinφ)))))
+
+
+(def geopoint-to-vector3d (memoize raw-geopoint-to-vector3d))
+
+
+(defn raw-osgrid-to-geopoint
+  ([osgrid datum]
+   (osgrid-to-geopoint (:e osgrid) (:n osgrid) datum))
+  ([E N datum]
+   (let
+     [a     6377563.396         ;; Airy 1830 major semi-axis
+      b     6356256.909         ;; Airy 1830 minor semi-axis
+      F0    0.9996012717        ;; national grid scale factor on central meridian
+      φ0    (radians 49)        ;; national grid true origin latitude
+      λ0    (radians -2)        ;; national grid true origin longitude
+      N0    -100000             ;; northing of true origin, metres
+      E0    400000              ;; easting of true origin, metres
+      e²    (-' 1
+               (/
+                 (*' b b)
+                 (*' a a)))      ;; eccentricity squared
+      n     (/ (-' a b) (+' a b))
+      n²    (*' n n)
+      n³    (*' n n n)
+      [M φ] (loop  [φ φ0 M 0]
+              (let
+                [φ₁ (+' φ (/ (-' N N0 M) (*' a F0)))
+                 Δφ    (-' φ φ0)
+                 Ma (*' (+' 1 n (*' 5/4 n²) (*' 5/4 n³)) Δφ)
+                 Mb (*' (+' (*' n 3) (*' n² 3) (*' n³ 21/8)) (sin Δφ) (cos Δφ))
+                 Mc (*' (+' (*' n² 15/8) (*' n³ 15/8)) (sin (*' 2 Δφ)) (cos (*' 2 Δφ)))
+                 Md (*' 35/24 n³ (sin (*' 3 Δφ)) (cos (*' 3 Δφ)))
+                 M₁ (*' b F0 (+' (-' 0 Ma) Mb Mc (-' 0 Md)))]
+                (if
+                  (>= (-' N N0 M₁) 0.00001)
+                  (recur M₁ φ₁)
+                  [M₁ φ₁])))
+      sinφ  (sin φ)
+      sin²φ (*' (sin φ) (sin φ))
+      cosφ  (cos φ)
+      v     (*' a (/ F0 (sqrt (-' 1 (*' e² sin²φ)))))
+      v³    (reduce * 1 (repeat 3 v))
+      v⁵    (reduce * 1 (repeat 5 v))
+      v⁷    (reduce * 1 (repeat 7 v))
+      ;; nu = transverse radius of curvature
+      ρ     (/ (*' a F0 (-' 1 e²)) (expt (-' 1 (*' e² sin²φ)) 1.5))
+      ;; rho = meridional radius of curvature
+      η2    (/ v (-' ρ 1))     ;; beware confusing η2 with n²
+      tanφ  (tan φ)
+      tan²φ (reduce * 1 (repeat 2 tanφ))
+      tan⁴φ (reduce * 1 (repeat 4 tanφ))
+      tan⁶φ (reduce * 1 (repeat 6 tanφ))
+      secφ  (/ 1 cosφ)
+      VII   (/ tanφ (*' 2 ρ v))
+      ;; TODO: check Javascript operator precedence!
+      VIII  (*' (/ tanφ (*' 24 ρ v³) (+' 5 (*' 3 tan²φ) η2 (-' 0 (*' 9 tan²φ η2)))))
+      ;;     var VIII = tanφ/(24*ρ*ν3)*(5+3*tan2φ+η2-9*tan2φ*η2);
+      IX    (*' (/ tanφ (*' 720 ρ v⁵)) (+' 61 (*' 90 tan²φ) (*' 45 tan⁴φ)))
+      ;;     var IX = tanφ/(720*ρ*ν5)*(61+90*tan2φ+45*tan4φ);
+      X     (/ secφ v)
+      XI    (*' (/ secφ (*' 6 v³)) (+' (/ v ρ) (*' 2 tan²φ)))
+      ;;    var XI = secφ/(6*ν3)*(ν/ρ+2*tan2φ);
+      XII   (*' (/ secφ (*' 120 v⁵)) (+' 5 (*' 28 tan²φ) (*' 24 tan⁴φ)))
+      ;;    var XII = secφ/(120*ν5)*(5+28*tan2φ+24*tan4φ);
+      XIIA  (*' (/ secφ (*' 5040 v⁷)) (+' 61 (*' 622 tan²φ) (*' 1322 tan⁴φ) (*' 720 tan⁶φ)))
+      ;;    var XIIA = secφ/(5040*ν7)*(61+662*tan2φ+1320*tan4φ+720*tan6φ);
+      Δe    (-' E E0)
+      Δe²   (reduce *' 1 (repeat 2 Δe))
+      Δe³   (reduce *' 1 (repeat 3 Δe))
+      Δe⁴   (reduce *' 1 (repeat 4 Δe))
+      Δe⁵   (reduce *' 1 (repeat 5 Δe))
+      Δe⁶   (reduce *' 1 (repeat 6 Δe))
+      Δe⁷   (reduce *' 1 (repeat 6 Δe))
+      φ₁    (+' φ (-' 0 (+' VII Δe²)) (*' VIII Δe⁴) (-' 0 (*' IX Δe⁷)))
+      λ₁    (+' λ0 (*' X Δe) (-' 0 (*' XI Δe³)) (*' IX Δe⁶) (-' 0 (*' XIIA Δe⁷)))]
+     (GeoPoint. (degrees φ₁) (degrees λ₁) :WGS84))))
+
+
+(def osgrid-to-geopoint (memoize raw-osgrid-to-geopoint))
 
 
 (defn post-code-data-to-addresses
@@ -450,44 +472,28 @@
             :key-fn #(keyword (.toLowerCase %))))))))
 
 
-;;(def home (GeoPoint. 54.8240911 -3.9170342 :WGS84))
+;; (def home (GeoPoint. 54.8240911 -3.9170342 :WGS84))
 
-;;
+;; ;;
 
-;; (:datum home)
+;; ;; (:datum home)
 ;; (datums (:datum home))
 ;; (:ellipsoid (datums (:datum home)))
-;; @@
-;; =>
-;;; {"type":"html","content":"<span class='clj-var'>#&#x27;yyy-data.core/home</span>","value":"#'yyy-data.core/home"}
-;; <=
 
-;; @@
-;;(.osgrid home :WGS84)
-;; @@
+;; ;; @@
+;; (osgrid home :WGS84)
 
-;; @@
-;;(:datum home)
+;; (def hazelfield (OsGrid. 277656 549165))
 
-;; @@
-;; =>
-;;; {"type":"html","content":"<span class='clj-keyword'>:WGS84</span>","value":":WGS84"}
-;; <=
+;; (apply-transform
+;;   (apply-transform
+;;     (Vector3d. 1 1 1)
+;;     { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  })
+;;   (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  }))
 
-;; @@
-;; (datums (:datum home))
-;; @@
-;; =>
-;;; {"type":"list-like","open":"<span class='clj-map'>{</span>","close":"<span class='clj-map'>}</span>","separator":", ","items":[{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:key</span>","value":":key"},{"type":"html","content":"<span class='clj-keyword'>:WGS84</span>","value":":WGS84"}],"value":"[:key :WGS84]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:ellipsoid</span>","value":":ellipsoid"},{"type":"list-like","open":"<span class='clj-map'>{</span>","close":"<span class='clj-map'>}</span>","separator":", ","items":[{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:a</span>","value":":a"},{"type":"html","content":"<span class='clj-long'>6378137</span>","value":"6378137"}],"value":"[:a 6378137]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:b</span>","value":":b"},{"type":"html","content":"<span class='clj-double'>6356752.314245</span>","value":"6356752.314245"}],"value":"[:b 6356752.314245]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:f</span>","value":":f"},{"type":"html","content":"<span class='clj-double'>0.0033528106647474805</span>","value":"0.0033528106647474805"}],"value":"[:f 0.0033528106647474805]"}],"value":"{:a 6378137, :b 6356752.314245, :f 0.0033528106647474805}"}],"value":"[:ellipsoid {:a 6378137, :b 6356752.314245, :f 0.0033528106647474805}]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:transform</span>","value":":transform"},{"type":"list-like","open":"<span class='clj-map'>{</span>","close":"<span class='clj-map'>}</span>","separator":", ","items":[{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:tx</span>","value":":tx"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:tx 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:ty</span>","value":":ty"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:ty 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:tz</span>","value":":tz"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:tz 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:s</span>","value":":s"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:s 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:rx</span>","value":":rx"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:rx 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:ry</span>","value":":ry"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:ry 0.0]"},{"type":"list-like","open":"","close":"","separator":" ","items":[{"type":"html","content":"<span class='clj-keyword'>:rz</span>","value":":rz"},{"type":"html","content":"<span class='clj-double'>0.0</span>","value":"0.0"}],"value":"[:rz 0.0]"}],"value":"{:tx 0.0, :ty 0.0, :tz 0.0, :s 0.0, :rx 0.0, :ry 0.0, :rz 0.0}"}],"value":"[:transform {:tx 0.0, :ty 0.0, :tz 0.0, :s 0.0, :rx 0.0, :ry 0.0, :rz 0.0}]"}],"value":"{:key :WGS84, :ellipsoid {:a 6378137, :b 6356752.314245, :f 0.0033528106647474805}, :transform {:tx 0.0, :ty 0.0, :tz 0.0, :s 0.0, :rx 0.0, :ry 0.0, :rz 0.0}}"}
-;; <=
+;; (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  })
 
-;; @@
-*ns*
-;; @@
-;; =>
-;;; {"type":"html","content":"<span class='clj-unkown'>#namespace[yyy-data.core]</span>","value":"#namespace[yyy-data.core]"}
-;; <=
 
-;; @@
+;; (geopoint (osgrid-to-geopoint hazelfield :froboz) :WGS84)
 
-;; @@
+

@@ -8,6 +8,8 @@
                  [org.clojure/clojure "1.8.0"]
                  [org.clojure/data.json "0.2.6"]
                  [org.clojure/math.numeric-tower "0.0.4"]
+                 [lein-light-nrepl "0.0.4"]
                  [net.mikera/core.matrix "0.62.0"]]
    :plugins [[lein-gorilla "0.4.0"]]
+   :repl-options {:nrepl-middleware [lighttable.nrepl.handler/lighttable-ops]}
   )
