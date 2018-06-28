@@ -44,7 +44,7 @@
 
 
 
-(declare geopoint-to-osgrid vector3d-to-geopoint geopoint-to-vector3d osgrid-to-geopoint)
+(declare geopoint->osgrid vector3d->geopoint geopoint->vector3d osgrid->geopoint)
 
 
 (def ellipsoids
@@ -115,7 +115,8 @@
   (ellipsoid [x] (:ellipsoid (datum x)))
   ;; I already am vector3d; return myself
   (vector3d [x] x)
-  (geopoint [this datum] (vector3d-to-geopoint this datum))
+  (geopoint [this datum] (vector3d->geopoint this datum))
+  (osgrid [this datum] (geopoint->osgrid (vector3d->geopoint this datum) datum))
   Transformable
   (apply-transform [this transform]
                    ;; tests say this works
@@ -194,7 +195,7 @@
                (:key (:datum location))))
   (ellipsoid [location]
              (:ellipsoid (datum [location])))
-  (vector3d [this] (geopoint-to-vector3d this))
+  (vector3d [this] (geopoint->vector3d this))
   (geopoint [location new-datum]
     (println (str "(geopoint " location " " new-datum ")"))
     (if
@@ -202,10 +203,10 @@
       location
       (let [od (datum location)
             nd (datums new-datum)
-            c (geopoint-to-vector3d location)]
+            c (geopoint->vector3d location)]
         (cond
           (= od nd) location
-          (= (:key od) :WGS84) (vector3d-to-geopoint
+          (= (:key od) :WGS84) (vector3d->geopoint
                                  (apply-transform c (:transform nd))
                                  (:datum location))
           (= (:key nd) :WGS84) (geopoint
@@ -225,7 +226,7 @@
   (grid-y [location]
           (:n (osgrid location (:datum location))))
   (osgrid [location datum]
-          (geopoint-to-osgrid location datum)))
+          (geopoint->osgrid location datum)))
 
 
 (defrecord OsGrid
@@ -239,18 +240,18 @@
   (grid-y [location] n)
   (latitude [location] (latitude (geopoint location :WGS84)))
   (longitude [location] (longitude (geopoint location :WGS84)))
-  (vector3d [location] (geopoint-to-vector3d (osgrid-to-geopoint location :WGS84)))
+  (vector3d [location] (geopoint->vector3d (osgrid->geopoint location :WGS84)))
   (geopoint [location datum]
-            (osgrid-to-geopoint location datum))
+            (osgrid->geopoint location datum))
   (osgrid [location datum] location))
 
 
-(defn raw-vector3d-to-geopoint
+(defn raw-vector3d->geopoint
   ;; My initial design decision to allow datums to be passed as keywords or as maps
   ;; was WRONG: a datum SHALL BE passed as a key
   ;; Tests say this works
   ([v datum]
-   (vector3d-to-geopoint (:x v) (:y v) (:z v) datum))
+   (vector3d->geopoint (:x v) (:y v) (:z v) datum))
   ([x y z d]
    (let
      [a (:a (:ellipsoid (datums d)))
@@ -276,12 +277,12 @@
 
 ;; memoisation here is used more to break mutual recursion than to speed things
 ;; up, although of course it will also speed things up a bit.
-(def vector3d-to-geopoint (memoize raw-vector3d-to-geopoint))
+(def vector3d->geopoint (memoize raw-vector3d->geopoint))
 
 
-(defn raw-geopoint-to-osgrid
+(defn raw-geopoint->osgrid
   ([gp datum]
-   (geopoint-to-osgrid (:latitude gp) (:longitude gp) (:datum gp) datum))
+   (geopoint->osgrid (:latitude gp) (:longitude gp) (:datum gp) datum))
   ([latitude longitude from-datum to-datum]
    ;; for bizarrely over-complicated trigonometry, look no further.
    ;; This doesn't work. But, to be brutally honest, I don't need it to.
@@ -349,14 +350,14 @@
      (OsGrid. E N))))
 
 
-(def geopoint-to-osgrid (memoize raw-geopoint-to-osgrid))
+(def geopoint->osgrid (memoize raw-geopoint->osgrid))
 
 
-(defn raw-geopoint-to-vector3d
+(defn raw-geopoint->vector3d
   ;; Tests say this no longer works
   ([gp]
-   (println (str "(geopoint-to-vector3d " geopoint ")"))
-   (geopoint-to-vector3d (:latitude gp) (:longitude gp) (datum gp)))
+   (println (str "(geopoint->vector3d " geopoint ")"))
+   (geopoint->vector3d (:latitude gp) (:longitude gp) (datum gp)))
   ([latitude longitude datum]
    (let [φ (radians latitude)
          λ (radians longitude)
@@ -375,14 +376,14 @@
        (*' v (+' h (-' 1 e²)) sinφ)))))
 
 
-(def geopoint-to-vector3d (memoize raw-geopoint-to-vector3d))
+(def geopoint->vector3d (memoize raw-geopoint->vector3d))
 
 
-(defn raw-osgrid-to-geopoint
+(defn raw-osgrid->geopoint
   ([osgrid]
-   (osgrid-to-geopoint osgrid :WGS84))
+   (osgrid->geopoint osgrid :WGS84))
   ([osgrid datum]
-   (osgrid-to-geopoint (:e osgrid) (:n osgrid) datum))
+   (osgrid->geopoint (:e osgrid) (:n osgrid) datum))
   ([E N datum]
    ;; this currently doesn't work
    (let
@@ -460,10 +461,10 @@
      (GeoPoint. (degrees φ₁) (degrees λ₁) :WGS84))))
 
 
-(def osgrid-to-geopoint (memoize raw-osgrid-to-geopoint))
+(def osgrid->geopoint (memoize raw-osgrid->geopoint))
 
 
-(defn post-code-data-to-addresses
+(defn post-code-data->addresses
   "`filename` is expected to be the path name of a JSON file containing records as documented
   [here](https://apidocs.os.uk/docs/os-places-dpa-output)."
   [filename]
@@ -508,6 +509,6 @@
 ;; (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  })
 
 
-;; (geopoint (osgrid-to-geopoint hazelfield :froboz) :WGS84)
+;; (geopoint (osgrid->geopoint hazelfield :froboz) :WGS84)
 
 

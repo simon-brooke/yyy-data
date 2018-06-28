@@ -22,7 +22,7 @@
         (str "Components should be close to 1: z: " (:z transformed))))))
 
 
-(deftest osgrid-to-geopoint-tests
+(deftest osgrid->geopoint-tests
   (testing "osgrid to geopoint one way"
     (let
       [hazelfield (yyy_data.core.OsGrid. 277656 549165)
@@ -35,7 +35,7 @@
         (str "Longitude should be -3.906009: "  (:longitude actual))))))
 
 
-(deftest geopoint-to-osgrid-tests
+(deftest geopoint->osgrid-tests
   (testing "geopoint to osgrid one way"
     (let
       [hazelfield (yyy_data.core.GeoPoint. 54.822218 -3.906009 :WGS84)
@@ -48,7 +48,7 @@
         (str "Easting should be 277656: "  (:e actual))))))
 
 
-(deftest osgrid-to-geopoint-round-trip-tests
+(deftest osgrid->geopoint-round-trip-tests
   (testing "osgrid to geopoint round trip"
     (let
       [hazelfield (yyy_data.core.OsGrid. 277656 549165)
@@ -64,7 +64,7 @@
                (:n hazelfield) ", " (:n actual))))))
 
 
-(deftest geopoint-to-vector-round-trip-tests
+(deftest geopoint->vector-round-trip-tests
   (testing "round trip geopoint->vector->geopoint"
     (let
       [hazelfield (yyy_data.core.GeoPoint. 54.822218 -3.906009 :WGS84)
@@ -78,7 +78,7 @@
         (str "Longitude should be -3.906009: "  (:longitude actual))))))
 
 
-(deftest osgrid-to-vector-round-trip-tests
+(deftest osgrid->vector-round-trip-tests
   (testing "round trip osgrid->vector->osgrid"
     (let
       [hazelfield (yyy_data.core.OsGrid. 277656 549165)
@@ -92,6 +92,10 @@
         (< (abs (- (:n hazelfield) (:n actual))) 0.001)
         (str "Components should be close to one another: northing: "
              (:n hazelfield) ", " (:n actual))))))
+
+;; (def hazelfield (yyy_data.core.OsGrid. 277656 549165))
+;; (def v (vector3d hazelfield))
+;; (osgrid->geopoint hazelfield :WGS84)
 
 
 ;; Currently blows up horribly (mutual recursion/stack). But I currently
