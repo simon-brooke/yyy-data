@@ -413,51 +413,58 @@
                  Ma (*' (+' 1 n (*' 5/4 n²) (*' 5/4 n³)) Δφ)
                  ;; var Mb = (3*n + 3*n*n + (21/8)*n3) * Math.sin(φ-φ0) * Math.cos(φ+φ0);
                  Mb (*' (+' (*' n 3) (*' n² 3) (*' 21/8 n³)) (sin Δφ) (cos (+' φ φ0)))
-                 Mc (*' (+' (*' n² 15/8) (*' n³ 15/8)) (sin (*' 2 Δφ)) (cos (*' 2 Δφ)))
-                 Md (*' 35/24 n³ (sin (*' 3 Δφ)) (cos (*' 3 Δφ)))
+                 ;; var Mc = ((15/8)*n2 + (15/8)*n3) * Math.sin(2*(φ-φ0)) * Math.cos(2*(φ+φ0));
+                 Mc (*' (+' (*' n² 15/8) (*' n³ 15/8)) (sin (*' 2 Δφ)) (cos (*' 2 (+' φ φ0))))
+                 ;; var Md = (35/24)*n3 * Math.sin(3*(φ-φ0)) * Math.cos(3*(φ+φ0));
+                 Md (*' 35/24 n³ (sin (*' 3 Δφ)) (cos (*' 3 (+' φ φ0))))
                  M₁ (*' b F0 (+' (-' 0 Ma) Mb Mc (-' 0 Md)))]
+                (println (str "loop: φ: " φ "; M: " M "; termination: " (-' N N0 M₁)))
                 (if
                   (>= (-' N N0 M₁) 0.00001)
-                  (recur M₁ φ₁)
+                  (recur φ₁ M₁)
                   [M₁ φ₁])))
       sinφ  (sin φ)
       sin²φ (*' (sin φ) (sin φ))
       cosφ  (cos φ)
-      v     (*' a (/ F0 (sqrt (-' 1 (*' e² sin²φ)))))
-      v³    (reduce * 1 (repeat 3 v))
-      v⁵    (reduce * 1 (repeat 5 v))
-      v⁷    (reduce * 1 (repeat 7 v))
+      ;; var ν = a*F0/Math.sqrt(1-e2*sinφ*sinφ);
       ;; nu = transverse radius of curvature
-      ρ     (/ (*' a F0 (-' 1 e²)) (expt (-' 1 (*' e² sin²φ)) 1.5))
+      v     (*' a (/ F0 (sqrt (-' 1 (*' e² sin²φ)))))
+      v³    (expt 3 v)
+      v⁵    (expt 5 v)
+      v⁷    (expt 7 v)
       ;; rho = meridional radius of curvature
+      ρ     (/ (*' a F0 (-' 1 e²)) (expt (-' 1 (*' e² sin²φ)) 1.5))
       η2    (/ v (-' ρ 1))     ;; beware confusing η2 with n²
       tanφ  (tan φ)
-      tan²φ (reduce * 1 (repeat 2 tanφ))
-      tan⁴φ (reduce * 1 (repeat 4 tanφ))
-      tan⁶φ (reduce * 1 (repeat 6 tanφ))
+      tan²φ (expt tanφ 2)
+      tan⁴φ (expt tanφ 4)
+      tan⁶φ (expt tanφ 6)
       secφ  (/ 1 cosφ)
       VII   (/ tanφ (*' 2 ρ v))
       ;; TODO: check Javascript operator precedence!
-      VIII  (*' (/ tanφ (*' 24 ρ v³) (+' 5 (*' 3 tan²φ) η2 (-' 0 (*' 9 tan²φ η2)))))
       ;;     var VIII = tanφ/(24*ρ*ν3)*(5+3*tan2φ+η2-9*tan2φ*η2);
-      IX    (*' (/ tanφ (*' 720 ρ v⁵)) (+' 61 (*' 90 tan²φ) (*' 45 tan⁴φ)))
+      VIII  (*' (/ tanφ (*' 24 ρ v³)) (+' 5 (*' 3 tan²φ) η2 (-' 0 (*' 9 tan²φ η2))))
       ;;     var IX = tanφ/(720*ρ*ν5)*(61+90*tan2φ+45*tan4φ);
+      IX    (*' (/ tanφ (*' 720 ρ v⁵)) (+' 61 (*' 90 tan²φ) (*' 45 tan⁴φ)))
       X     (/ secφ v)
-      XI    (*' (/ secφ (*' 6 v³)) (+' (/ v ρ) (*' 2 tan²φ)))
       ;;    var XI = secφ/(6*ν3)*(ν/ρ+2*tan2φ);
-      XII   (*' (/ secφ (*' 120 v⁵)) (+' 5 (*' 28 tan²φ) (*' 24 tan⁴φ)))
+      XI    (*' (/ secφ (*' 6 v³)) (+' (/ v ρ) (*' 2 tan²φ)))
       ;;    var XII = secφ/(120*ν5)*(5+28*tan2φ+24*tan4φ);
-      XIIA  (*' (/ secφ (*' 5040 v⁷)) (+' 61 (*' 622 tan²φ) (*' 1322 tan⁴φ) (*' 720 tan⁶φ)))
+      XII   (*' (/ secφ (*' 120 v⁵)) (+' 5 (*' 28 tan²φ) (*' 24 tan⁴φ)))
       ;;    var XIIA = secφ/(5040*ν7)*(61+662*tan2φ+1320*tan4φ+720*tan6φ);
+      XIIA  (*' (/ secφ (*' 5040 v⁷)) (+' 61 (*' 622 tan²φ) (*' 1322 tan⁴φ) (*' 720 tan⁶φ)))
       Δe    (-' E E0)
-      Δe²   (reduce *' 1 (repeat 2 Δe))
-      Δe³   (reduce *' 1 (repeat 3 Δe))
-      Δe⁴   (reduce *' 1 (repeat 4 Δe))
-      Δe⁵   (reduce *' 1 (repeat 5 Δe))
-      Δe⁶   (reduce *' 1 (repeat 6 Δe))
-      Δe⁷   (reduce *' 1 (repeat 6 Δe))
-      φ₁    (+' φ (-' 0 (+' VII Δe²)) (*' VIII Δe⁴) (-' 0 (*' IX Δe⁷)))
-      λ₁    (+' λ0 (*' X Δe) (-' 0 (*' XI Δe³)) (*' IX Δe⁶) (-' 0 (*' XIIA Δe⁷)))]
+      Δe²   (expt Δe 2)
+      Δe³   (expt Δe 3)
+      Δe⁴   (expt Δe 4)
+      Δe⁵   (expt Δe 5)
+      Δe⁶   (expt Δe 6)
+      Δe⁷   (expt Δe 7)
+      ;; latitude: this is the one that is badly wrong
+      ;; φ = φ - VII*dE2 + VIII*dE4 - IX*dE6;
+      φ₁    (-' (+' (-' φ (*' VII Δe²)) (*' VIII Δe⁴)) (*' IX Δe⁶))
+      ;; var λ = λ0 + X*dE - XI*dE3 + XII*dE5 - XIIA*dE7;
+      λ₁    (-' (+' (-' (+' λ0 (*' X Δe)) (*' XI Δe³)) (*' IX Δe⁵)) (*' XIIA Δe⁷))]
      (GeoPoint. (degrees φ₁) (degrees λ₁) :WGS84))))
 
 
