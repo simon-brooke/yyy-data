@@ -122,24 +122,21 @@
                    ;; tests say this works
     (println (str "(apply-transform " this " " transform ")"))
                    (let
-                     [s1 (+' (/ (:s transform) 1e6) 1)           ;; scale
+                     [s1 (+' (/ (:s transform) 1e6) 1)          ;; scale
                       rx (radians (/ (:rx transform) 3600))     ;; x-rotation: normalise arcseconds to radians
                       ry (radians (/ (:ry transform) 3600))     ;; y-rotation: normalise arcseconds to radians
                       rz (radians (/ (:rz transform) 3600))     ;; z-rotation: normalise arcseconds to radians
-;;                       var x2 = tx + x1*s1 - y1*rz + z1*ry;
                       x2 (-'
                            (+' (:tx transform)
                               (*' (:x this) s1))
                            (+'
                              (*' (:y this) rz)
                              (*' (:z this) ry)))
-;;                       var y2 = ty + x1*rz + y1*s1 - z1*rx;
                       y2 (+'
                            (:ty transform)
                            (*' (:x this) rz)
                            (*' (:y this) s1)
                            (-' 0 (*' (:z this) rx)))
-;;                       var z2 = tz - x1*ry + y1*rx + z1*s1;
                       z2 (+'
                            (:tz transform)
                            (-' 0 (*' (:x this) ry))
@@ -247,9 +244,6 @@
 
 
 (defn raw-vector3d->geopoint
-  ;; My initial design decision to allow datums to be passed as keywords or as maps
-  ;; was WRONG: a datum SHALL BE passed as a key
-  ;; Tests say this works
   ([v datum]
    (vector3d->geopoint (:x v) (:y v) (:z v) datum))
   ([x y z d]
@@ -354,7 +348,6 @@
 
 
 (defn raw-geopoint->vector3d
-  ;; Tests say this no longer works
   ([gp]
    (println (str "(geopoint->vector3d " geopoint ")"))
    (geopoint->vector3d (:latitude gp) (:longitude gp) (datum gp)))
@@ -385,7 +378,6 @@
   ([osgrid datum]
    (osgrid->geopoint (:e osgrid) (:n osgrid) datum))
   ([E N datum]
-   ;; this currently doesn't work
    (let
      [a     6377563.396         ;; Airy 1830 major semi-axis
       b     6356256.909         ;; Airy 1830 minor semi-axis
@@ -394,31 +386,21 @@
       λ0    (radians -2)        ;; national grid true origin longitude
       N0    -100000             ;; northing of true origin, metres
       E0    400000              ;; easting of true origin, metres
-      ;; var e2 = 1 - (b*b)/(a*a);
       e²    (-' 1
                (/
                  (*' b b)
                  (*' a a)))      ;; eccentricity squared
-      ;; var n = (a-b)/(a+b), n2 = n*n, n3 = n*n*n;
       n     (/ (-' a b) (+' a b))
       n²    (expt n 2)
       n³    (expt n 3)
       [M φ] (loop  [φ φ0 M 0]
-              ;; the error is in this loop somewhere..
               (let
-                ;; φ = (N-N0-M)/(a*F0) + φ;
                 [φ₁ (+' φ (/ (-' N N0 M) (*' a F0)))
-                 ;; (φ-φ0)
                  Δφ (-' φ₁ φ0)
-                 ;; var Ma = (1 + n + (5/4)*n2 + (5/4)*n3) * (φ-φ0);
                  Ma (*' (+' 1 n (*' 5/4 n²) (*' 5/4 n³)) Δφ)
-                 ;; var Mb = (3*n + 3*n*n + (21/8)*n3) * Math.sin(φ-φ0) * Math.cos(φ+φ0);
                  Mb (*' (+' (*' n 3) (*' n² 3) (*' 21/8 n³)) (sin Δφ) (cos (+' φ₁ φ0)))
-                 ;; var Mc = ((15/8)*n2 + (15/8)*n3) * Math.sin(2*(φ-φ0)) * Math.cos(2*(φ+φ0));
                  Mc (*' (+' (*' n² 15/8) (*' n³ 15/8)) (sin (*' 2 Δφ)) (cos (*' 2 (+' φ₁ φ0))))
-                 ;; var Md = (35/24)*n3 * Math.sin(3*(φ-φ0)) * Math.cos(3*(φ+φ0));
                  Md (*' 35/24 n³ (sin (*' 3 Δφ)) (cos (*' 3 (+' φ₁ φ0))))
-                 ;; M = b * F0 * (Ma - Mb + Mc - Md);
                  M₁ (*' b F0 (+' (-' Ma Mb) (-' Mc Md)))]
                 (if
                   (>= (-' N N0 M₁) 0.00001)
@@ -427,7 +409,6 @@
       sinφ  (sin φ)
       sin²φ (*' (sin φ) (sin φ))
       cosφ  (cos φ)
-      ;; var ν = a*F0/Math.sqrt(1-e2*sinφ*sinφ);
       ;; nu = transverse radius of curvature
       v     (*' a (/ F0 (sqrt (-' 1 (*' e² sin²φ)))))
       v³    (expt 3 v)
@@ -442,17 +423,11 @@
       tan⁶φ (expt tanφ 6)
       secφ  (/ 1 cosφ)
       VII   (/ tanφ (*' 2 ρ v))
-      ;; TODO: check Javascript operator precedence!
-      ;;     var VIII = tanφ/(24*ρ*ν3)*(5+3*tan2φ+η2-9*tan2φ*η2);
       VIII  (*' (/ tanφ (*' 24 ρ v³)) (+' 5 (*' 3 tan²φ) η2 (-' 0 (*' 9 tan²φ η2))))
-      ;;     var IX = tanφ/(720*ρ*ν5)*(61+90*tan2φ+45*tan4φ);
       IX    (*' (/ tanφ (*' 720 ρ v⁵)) (+' 61 (*' 90 tan²φ) (*' 45 tan⁴φ)))
       X     (/ secφ v)
-      ;;    var XI = secφ/(6*ν3)*(ν/ρ+2*tan2φ);
       XI    (*' (/ secφ (*' 6 v³)) (+' (/ v ρ) (*' 2 tan²φ)))
-      ;;    var XII = secφ/(120*ν5)*(5+28*tan2φ+24*tan4φ);
       XII   (*' (/ secφ (*' 120 v⁵)) (+' 5 (*' 28 tan²φ) (*' 24 tan⁴φ)))
-      ;;    var XIIA = secφ/(5040*ν7)*(61+662*tan2φ+1320*tan4φ+720*tan6φ);
       XIIA  (*' (/ secφ (*' 5040 v⁷)) (+' 61 (*' 622 tan²φ) (*' 1322 tan⁴φ) (*' 720 tan⁶φ)))
       Δe    (-' E E0)
       Δe²   (expt Δe 2)
@@ -461,10 +436,7 @@
       Δe⁵   (expt Δe 5)
       Δe⁶   (expt Δe 6)
       Δe⁷   (expt Δe 7)
-      ;; latitude: this is the one that is badly wrong
-      ;; φ = φ - VII*dE2 + VIII*dE4 - IX*dE6;
       φ₁    (-' (+' (-' φ (*' VII Δe²)) (*' VIII Δe⁴)) (*' IX Δe⁶))
-      ;; var λ = λ0 + X*dE - XI*dE3 + XII*dE5 - XIIA*dE7;
       λ₁    (-' (+' (-' (+' λ0 (*' X Δe)) (*' XI Δe³)) (*' IX Δe⁵)) (*' XIIA Δe⁷))]
      (GeoPoint. (degrees φ₁) (degrees λ₁) :WGS84))))
 
