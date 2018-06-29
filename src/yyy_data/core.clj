@@ -476,47 +476,32 @@
   "`filename` is expected to be the path name of a JSON file containing records as documented
   [here](https://apidocs.os.uk/docs/os-places-dpa-output)."
   [filename]
-  (map
-    (fn [a]
-      (let [location (.geopoint (OsGrid. (:x_coordinate a) (:y_coordinate a)) :WGS84)]
-        (s/join
-          (list
-            "insert into addresses (address:ellipsoid postcode}} latitude, longitude) values ('"
-            (:address a) "', '" (:postcode a)
-            "', " (.latitude location) "," (.longitude location) ");"))
-        ))
-    (filter
-      #(= (:classification_code_description %) "Dwelling")
-      (map
-        :dpa
-        (:results
-          (json/read-str
-            (slurp filename)
-            :key-fn #(keyword (.toLowerCase %))))))))
-
-
-;; (def home (GeoPoint. 54.8240911 -3.9170342 :WGS84))
-
-;; ;;
-
-;; ;; (:datum home)
-;; (datums (:datum home))
-;; (:ellipsoid (datums (:datum home)))
-
-;; ;; @@
-;; (osgrid home :WGS84)
-
-;; (def hazelfield (OsGrid. 277656 549165))
-
-;; (apply-transform
-;;   (apply-transform
-;;     (Vector3d. 1 1 1)
-;;     { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  })
-;;   (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  }))
-
-;; (inverse-transform { :tx   89.5,   :ty   93.8   :tz  123.1   :s -1.2    :rx  0.0    :ry  0.0     :rz  0.156  })
-
-
-;; (geopoint (osgrid->geopoint hazelfield :froboz) :WGS84)
+  (s/join
+    "\n\n"
+    (map
+      (fn [a]
+        (let [location (.geopoint (OsGrid. (:x_coordinate a) (:y_coordinate a)) :WGS84)]
+          (s/join
+            "\n"
+            (list
+              (str
+                "insert into addresses (address, postcode, latitude, longitude) values ('"
+                (:address a) "', '" (:postcode a)
+                "', " (.latitude location) "," (.longitude location) ");")
+              ;; TODO: doesn't deal intelligently with flats and tenements.
+              (str
+                "insert into dwellings (address_id, sub_address) "
+                "values ((select id from addresses where addresses.address = '"
+                (:address a)
+                "'), '');")))
+          ))
+      (filter
+        #(= (:classification_code_description %) "Dwelling")
+        (map
+          :dpa
+          (:results
+            (json/read-str
+              (slurp filename)
+              :key-fn #(keyword (.toLowerCase %)))))))))
 
 
